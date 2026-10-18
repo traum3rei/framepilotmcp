@@ -1,4 +1,5 @@
 import { McpServer } from '@modelcontextprotocol/server';
+import { runLive } from './live.js';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import * as z from 'zod/v4';
 import { execFile } from 'node:child_process';
@@ -28,6 +29,13 @@ async function runBlender(
   action: 'inspect' | 'set_camera' | 'render' | 'set_light_energy',
   payload: Record<string, unknown> = {},
 ) {
+  // Prefer the open Blender window when its Live bridge is running.
+  // FRAMEPILOT_MODE=headless forces the original, separate Blender process.
+  // FRAMEPILOT_MODE=live requires a connection (never silently falls back).
+  if (process.env.FRAMEPILOT_MODE !== 'headless' &&
+      (process.env.FRAMEPILOT_MODE === 'live' || existsSync(resolve(runtimeDir, 'framepilot-live.json')))) {
+    return runLive(action, { ...payload, previewPath });
+  }
   if (!existsSync(sourceScene)) {
     throw new Error(`Keine Blender-Szene gefunden: ${sourceScene}. Erst npm run demo ausführen oder FRAMEPILOT_SCENE setzen.`);
   }
