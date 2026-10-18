@@ -67,3 +67,43 @@ def repair_low_angle_position(position: Sequence[float], target: Sequence[float]
         return [float(v) for v in position]
     factor = max_horizontal / horizontal
     return [float(target[0] + dx * factor), float(target[1] + dy * factor), float(position[2])]
+
+
+def normalize_camera_geometry(position: Sequence[float], target: Sequence[float],
+                              min_pitch: float | None,
+                              *, floor_clearance: float = 0.35,
+                              pitch_margin: float = 3.0) -> list[float] | None:
+    """Repair minor floor/pitch violations without another LLM call.
+
+    First clamps camera height above the demo-scene floor, then moves the
+    camera horizontally closer to the target if a requested minimum upward
+    viewing angle is not met. Never changes target/lens. Only checks geometry;
+    Blender collision/visibility and visual composition still need review.
+
+    Returns None if a safe geometric repair is impossible.
+    """
+    if len(position) != 3 or len(target) != 3:
+        return None
+    if not all(isinstance(v, (int, float)) and math.isfinite(v)
+               for v in (*position, *target)):
+        return None
+    if not 0.15 <= floor_clearance < 100:
+        raise ValueError("floor_clearance must be >= 0.15")
+
+    corrected = [float(v) for v in position]
+    corrected[2] = max(corrected[2], floor_clearance)
+
+    if min_pitch is not None:
+        if corrected[2] >= float(target[2]):
+            return None
+        repaired = repair_low_angle_position(corrected, target, min_pitch,
+                                             margin=pitch_margin)
+        if repaired is None:
+            return None
+        corrected = repaired
+
+    # Use a valid placeholder lens solely to check geometric constraints.
+    # The actual proposal lens is validated by the caller.
+    if validate_camera(corrected, target, 35, min_pitch):
+        return None
+    return corrected
