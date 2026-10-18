@@ -1,0 +1,8 @@
+node_modules/
+scene.blend
+scene.blend1
+runtime/
+.cursor/mcp.json
+*.blend1
+.DS_Store
+.codex/config.toml
