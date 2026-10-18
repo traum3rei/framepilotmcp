@@ -61,13 +61,6 @@ Das visuelle Interpretieren des Bildes hängt davon ab, ob der lokale Codex-Clie
 
 Lege eine eigene Datei als `scene.blend` im Projektordner ab oder setze `FRAMEPILOT_SCENE` beim `npm run setup:codex`. Wenn schon eine Arbeitskopie existiert, zuerst `npm run reset` ausführen.
 
-## MCP bewusst lernen
-
-1. Lies `src/server.ts`: `registerTool` + `inputSchema` definieren den Tool-Vertrag.
-2. Lies `scripts/blender_bridge.py`: Python/bpy setzt den Tool-Aufruf in Blender um.
-3. Baue ein viertes Tool `list_cameras` oder `set_focus_distance`.
-4. Teste Fehlerfälle und lerne, warum schreibende Aktionen eine Freigabe verdienen.
-
 ## Troubleshooting
 
 - **Kein FramePilot in `/mcp`**: Prüfe, ob Codex **lokal**, im Projektordner und mit Projektvertrauen gestartet ist; starte die Sitzung neu.
@@ -75,5 +68,3 @@ Lege eine eigene Datei als `scene.blend` im Projektordner ab oder setze `FRAMEPI
 - **Real Water 2 / Fluid Painter wirft beim Beenden `missing bl_rna`**: FramePilot startet Blender nun mit `--factory-startup`, damit normale Benutzer-Add-ons nicht geladen werden. Die Add-ons bleiben in der regulären Blender-Oberfläche unverändert. Falls nach `npm run demo` die Datei `scene.blend` existiert und „Demo-Szene erstellt“ ausgegeben wurde, war der Schritt erfolgreich.
 - **`scene.blend` fehlt**: `npm run demo` ausführen oder eine eigene Datei ablegen.
 - **Große Szene rendert langsam**: Blender läuft einmal pro Aufruf; standardmäßig bis 180 Sekunden pro Operation.
-
-**Sicherheit:** Verwende nur vertrauenswürdige `.blend`-Dateien. Blender kann Skripte und Treiber ausführen. Die lokale Codex-Instanz braucht Zugriff auf die Blender-Binärdatei.
