@@ -1,6 +1,7 @@
-"""One-shot LangGraph agent using FramePilot's existing TypeScript MCP server.
+"""FramePilot LangGraph agent: iterative locally, quota-conscious in the cloud.
 
-One LLM request and at most one MCP tool invocation per process. No autonomous loops.
+Ollama can call tools repeatedly, inspecting the result after each step.
+Cloud providers use exactly one model request and at most one MCP tool invocation.
 """
 
 import argparse
@@ -52,7 +53,7 @@ def display_content(content) -> str:
 
 
 async def main() -> None:
-    parser = argparse.ArgumentParser(description="Small, quota-conscious FramePilot LangGraph agent")
+    parser = argparse.ArgumentParser(description="FramePilot: iterative Ollama, one-shot cloud agent")
     parser.add_argument("prompt", help="One instruction for FramePilot")
     parser.add_argument("--provider", choices=["gemini", "ollama"], default="gemini")
     parser.add_argument(
@@ -87,11 +88,13 @@ async def main() -> None:
         raise ValueError(f"Unknown tools: {sorted(unknown)}. Available: {sorted(available_names)}")
     allowed_tools = [tool for tool in available if tool.name in requested]
 
+    local_mode = args.provider == "ollama"
     llm = create_model(args.provider).bind_tools(allowed_tools)
 
     async def model_step(state: MessagesState):
         response = await llm.ainvoke(state["messages"])
-        # Enforce one tool call even when the model requests several in parallel.
+        # Run only one tool per turn to avoid concurrent Blender edits.
+        # Ollama may call more tools in *subsequent* turns.
         if len(response.tool_calls) > 1:
             response = response.model_copy(update={"tool_calls": response.tool_calls[:1]})
         return {"messages": [response]}
@@ -101,18 +104,39 @@ async def main() -> None:
     graph.add_node("tools", ToolNode(allowed_tools))
     graph.add_edge(START, "model")
     graph.add_conditional_edges("model", tools_condition)
-    graph.add_edge("tools", END)  # no second LLM request / no autonomous retries
+    # The local model gets the tool result and decides the next step.
+    # Cloud mode stops after one tool execution, without another LLM request.
+    graph.add_edge("tools", "model" if local_mode else END)
     agent = graph.compile()
 
-    result = await agent.ainvoke({"messages": [
-        SystemMessage(content=(
-            "You are FramePilot, a Blender assistant. You may ONLY use provided tools. "
-            "Choose no more than one tool. Do not request renders unless explicitly asked. "
-            "If a task needs multiple tool calls, do only the first safe step. "
-            "Do not invent Blender coordinates or object names."
-        )),
-        HumanMessage(content=args.prompt),
-    ]})
+    common_instructions = (
+        "You are FramePilot, a Blender assistant. You may ONLY use provided tools. "
+        "Do not render unless explicitly asked. Do not invent object names or scene coordinates. "
+        "Avoid destructive changes that were not requested."
+    )
+    if local_mode:
+        policy = (
+            "You may make multiple sequential tool calls to finish the user's task. "
+            "Inspect the scene when you need positions or object names. "
+            "After each tool result, decide whether another tool is needed. "
+            "When the task is complete, respond normally WITHOUT calling another tool. "
+            "Do not repeat calls that have already succeeded without a reason."
+        )
+    else:
+        policy = (
+            "You have a strict budget of ONE model request and at most ONE tool call. "
+            "If the task needs more steps, perform only the first safe step."
+        )
+
+    result = await agent.ainvoke(
+        {"messages": [
+            SystemMessage(content=common_instructions + " " + policy),
+            HumanMessage(content=args.prompt),
+        ]},
+        # A high recursion limit is only an emergency stop for a stuck local agent.
+        # Each tool loop uses approximately two graph steps. No low tool-call quota.
+        config={"recursion_limit": 1000 if local_mode else 4},
+    )
     for message in result["messages"][2:]:
         if getattr(message, "tool_calls", None):
             call = message.tool_calls[0]
