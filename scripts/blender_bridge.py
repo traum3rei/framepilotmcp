@@ -64,6 +64,28 @@ def set_camera(payload):
     bpy.ops.wm.save_as_mainfile(filepath=payload["workingScene"], check_existing=False)
     return {"saved_working_copy": payload["workingScene"], "camera": camera_info(camera)}
 
+def set_light_energy(payload):
+    scene = bpy.context.scene
+
+    light_name = payload["light_name"]
+    energy = float(payload["energy"])
+
+    light = scene.objects.get(light_name)
+
+    if light is None or light.type != 'LIGHT':
+        raise ValueError(f"Light '{light_name}' not found")
+
+    light.data.energy = energy
+
+    bpy.ops.wm.save_as_mainfile(
+        filepath=payload["workingScene"],
+        check_existing=False
+    )
+
+    return {
+        "light": light.name,
+        "energy": light.data.energy
+    }
 
 def render_preview(payload):
     scene = bpy.context.scene
@@ -97,6 +119,8 @@ def main():
         result = set_camera(payload)
     elif action == 'render':
         result = render_preview(payload)
+    elif action == 'set_light_energy':
+        result = set_light_energy(payload)
     else:
         raise ValueError(f"Unknown action: {action}")
     print('FRAMEPILOT_JSON:' + json.dumps(result, ensure_ascii=False))

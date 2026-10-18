@@ -25,7 +25,7 @@ function errorResult(error: unknown) {
 }
 
 async function runBlender(
-  action: 'inspect' | 'set_camera' | 'render',
+  action: 'inspect' | 'set_camera' | 'render' | 'set_light_energy',
   payload: Record<string, unknown> = {},
 ) {
   if (!existsSync(sourceScene)) {
@@ -83,12 +83,35 @@ function createServer() {
     } catch (e) { return errorResult(e); }
   });
 
+  server.registerTool('set_light_energy', {
+  description: 'Change the energy of a named light in Blender.',
+  inputSchema: z.object({
+    light_name: z.string().min(1),
+    energy: z.number().min(0).max(10000),
+  }),
+}, async ({ light_name, energy }) => {
+  try {
+    const data = await serialized(() =>
+      runBlender('set_light_energy', { light_name, energy })
+    );
+
+    return {
+      content: [{
+        type: 'text' as const,
+        text: JSON.stringify(data, null, 2)
+      }]
+    };
+  } catch (e) {
+    return errorResult(e);
+  }
+});
+
   server.registerTool('set_camera', {
     description: 'Move the Blender camera to a 3D position, aim it at a 3D target and set its lens in millimeters. Edits a separate working copy, not the original scene. Coordinates in meters / Blender units.',
     inputSchema: z.object({
-      position: z.tuple([z.number().finite(), z.number().finite(), z.number().finite()])
+      position: z.tuple([z.number(), z.number(), z.number()])
         .describe('Camera location [x, y, z]'),
-      target: z.tuple([z.number().finite(), z.number().finite(), z.number().finite()])
+      target: z.tuple([z.number(), z.number(), z.number()])
         .describe('Point the camera looks at [x, y, z]'),
       lens_mm: z.number().min(18).max(120).default(50)
         .describe('Camera focal length in millimeters'),
