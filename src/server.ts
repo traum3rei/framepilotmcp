@@ -1,4 +1,5 @@
 import { McpServer } from '@modelcontextprotocol/server';
+import { registerV1Tools } from './v1_tools.js';
 import { runLive } from './live.js';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import * as z from 'zod/v4';
@@ -150,6 +151,7 @@ function createServer() {
     } catch (e) { return errorResult(e); }
   });
 
+  registerV1Tools(server, (action, payload) => serialized(() => runLive(action, payload)));
   return server;
 }
 
