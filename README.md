@@ -1,70 +1,152 @@
-# FramePilot – Blender Camera Director via MCP (Codex)
+# FramePilot
 
-Ein kleines MCP-Lernprojekt: Du benutzt **Codex CLI oder die lokale Codex IDE-Erweiterung**, um eine `.blend`-Datei zu untersuchen, die Kamera in einer **Arbeitskopie** zu verändern und ein Preview-Rendering zurückzubekommen.
+**A local, MCP-powered assistant for camera and lighting adjustments in Blender.**
 
-## Architektur
+FramePilot connects a running Blender scene to AI tools through a TypeScript [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server. An experimental Python/LangGraph workflow uses a local Ollama model to plan camera or lighting adjustments, render low-resolution previews, compare them with the previous best image, and retain the preferred result.
 
-```text
-Codex CLI / lokale Codex IDE
-        ↕ MCP über stdio
-TypeScript MCP-Server: src/server.ts
-        ↕ Blender-Subprozess
-Blender Python API: scripts/blender_bridge.py
-        ↕
-scene.blend → runtime/session.blend + runtime/preview.png
+It started as an MCP learning project and is now a **working prototype**, not a finished autonomous art director. The system can operate on different Blender scenes; artistic judgments remain subjective and need human review.
+
+## What it does
+
+- **Inspect the open scene:** list objects, inspect individual objects and lights, read the active camera and render settings.
+- **Control Blender live:** update camera transforms and existing light properties in the Blender window through a local bridge.
+- **Plan with specialized roles:** a LangGraph Director routes tasks to a Camera or Lighting agent.
+- **Compare real renders:** a vision-capable Ollama model evaluates a candidate preview against the current best, gives feedback, and selects a preferred variant.
+- **Keep experiments reversible:** editing is opt-in (`--apply`), the workflow records evaluation results, and it attempts to restore the selected camera and light state at the end. Changes are **not saved automatically** to your `.blend` file.
+
+### Architecture
+
+```mermaid
+flowchart TD
+    U[User request] --> D[LangGraph Director]
+    D --> P{Camera or lighting?}
+    P --> C[Camera specialist]
+    P --> L[Lighting specialist]
+    C --> V[Validate proposal]
+    L --> V
+    V --> MCP[TypeScript MCP server]
+    MCP --> B[Local Blender Live bridge]
+    B --> R[Preview render]
+    R --> E[Ollama vision reviewer]
+    E --> S{Prefer new candidate?}
+    S -->|Yes| K[Remember new best]
+    S -->|No| F[Keep earlier best]
+    K --> Q{Done or attempts left?}
+    F --> Q
+    Q -->|Try again| P
+    Q -->|Finish| X[Restore selected state in Blender]
 ```
 
-Der Server führt Blender im Hintergrund pro Tool-Aufruf aus. Die Originalszene wird nicht überschrieben; die Änderungen stehen in `runtime/session.blend`. Es ist **noch keine Live-Verbindung** zur geöffneten Blender-Oberfläche.
+The Blender add-on receives authenticated localhost commands and performs Blender API operations on Blender's main thread. The MCP server communicates with clients over stdio. For implementation details and caveats, see [Architecture](docs/ARCHITECTURE.md).
 
-## Voraussetzungen
+## Quick start (macOS + Blender)
 
-- macOS mit Blender (4.x oder 5.x), standardmäßig `/Applications/Blender.app/Contents/MacOS/Blender`
-- Node.js 20+, npm
-- Codex CLI oder die lokale Codex IDE-Erweiterung; **nicht Codex Cloud**, da diese keinen direkten Zugriff auf deine lokale Blender-Installation hat
+**Prerequisites:** Blender 4.2+ (developed around Blender 5.2), Node.js 20+, Python and [Ollama](https://ollama.com/). A local vision-capable model is required for the automatic image comparison. Blender and Ollama run on the same computer.
 
-## Erste Schritte
+### 1. Install dependencies
 
 ```bash
-cd framepilot
 npm install
 npm run check
-npm run demo
-npm run setup:codex
+python3 -m venv agent/.venv
+source agent/.venv/bin/activate
+pip install -r agent/requirements.txt
+ollama pull qwen3.5:4b
 ```
 
-`npm run demo` erstellt eine kleine dunkle Szene mit Säulen und schwebendem Auge (`scene.blend`). `npm run setup:codex` legt `.codex/config.toml` mit den absoluten Pfaden auf deinem Rechner an. Diese Datei ist gitignored, weil sie maschinenspezifische Pfade enthält. Eine bestehende Konfiguration wird nicht überschrieben.
+Start the Ollama desktop app (or `ollama serve` if not already running).
 
-**Blender an anderer Stelle installiert?** Dann setze denselben abweichenden Pfad bei beiden Befehlen:
+### 2. Enable the live integration
+
+The repository already contains the v1 MCP tool registration. On a fresh setup, the installer scripts are safe to rerun:
 
 ```bash
-BLENDER_PATH="/pfad/zur/Blender-App/Contents/MacOS/Blender" npm run demo
-BLENDER_PATH="/pfad/zur/Blender-App/Contents/MacOS/Blender" npm run setup:codex
+node scripts/enable-live.mjs
+node scripts/enable-v1.mjs
+npm run check
 ```
 
-Öffne **den gesamten Projektordner** in der lokalen Codex CLI (`codex`) oder Codex IDE. **Vertraue dem Projekt**, sonst überspringt Codex `.codex/config.toml`. In der CLI zeigt `/mcp` aktive Server. Nach Änderungen der MCP-Konfiguration die Codex-Sitzung bzw. IDE-Erweiterung neu starten.
+Install `addons/framepilot_live.py` through Blender's add-on preferences, **or** on macOS use:
 
-Alternativ: MCP-Server global per `codex mcp add` registrieren, wenn du ihn aus anderen Projektordnern verwenden willst. Die mitgelieferte Variante ist absichtlich projektlokal.
+```bash
+node scripts/install-v1-addon.mjs 5.2
+```
 
-## Tools
+Restart Blender after installing/updating the add-on. Open a copy of your own `.blend` file, ensure an active camera is selected, open the 3D Viewport's **N sidebar > FramePilot**, set the project path if necessary, and click **Start Live Bridge**. Verify that the Blender window reports an active connection.
 
-- `inspect_scene()` – Szene, Objekte, Kamera, Render-Engine und Positionen lesen
-- `set_camera(position, target, lens_mm)` – Position, Zielpunkt und Brennweite setzen; Arbeitskopie speichern
-- `render_preview()` – 480×270 PNG rendern und als MCP-Bild-Ergebnis zurückgeben
+### 3. Inspect without an LLM or edits
 
-## Beispielprompt
+```bash
+python agent/v1.py --inspect
+```
 
-> Verwende FramePilot. Inspiziere zuerst die Szene. Positioniere die Kamera so, dass das rote Auge bedrohlich und dominant wirkt. Rendere ein Preview. Erkläre kurz die Komposition. Ändere danach nichts mehr ohne meine Freigabe.
+This prints scene, camera, objects, and lights from the open Blender window. It does **not** call Ollama, render, or modify the scene.
 
-Das visuelle Interpretieren des Bildes hängt davon ab, ob der lokale Codex-Client MCP-Bildantworten entsprechend weiterreicht. In jedem Fall landet die Datei unter `runtime/preview.png`.
+### 4. Preview a plan (no edits)
 
-## Eigene .blend nutzen
+```bash
+python agent/v1.py \
+  "Improve the lighting while preserving the current composition." \
+  --model qwen3.5:4b
+```
 
-Lege eine eigene Datei als `scene.blend` im Projektordner ab oder setze `FRAMEPILOT_SCENE` beim `npm run setup:codex`. Wenn schon eine Arbeitskopie existiert, zuerst `npm run reset` ausführen.
+### 5. Run a short visual comparison
 
-## Troubleshooting
+```bash
+python agent/v1.py \
+  "Make the lighting more atmospheric without blowing out highlights on the main subject." \
+  --model qwen3.5:4b \
+  --vision-model qwen3.5:4b \
+  --apply --attempts 2
+```
 
-- **Kein FramePilot in `/mcp`**: Prüfe, ob Codex **lokal**, im Projektordner und mit Projektvertrauen gestartet ist; starte die Sitzung neu.
-- **Blender-Prozess startet nicht**: `BLENDER_PATH` auf die echte Blender-Binärdatei setzen; `npm run setup:codex` erzeugt die Konfiguration erneut nur nach explizitem Löschen der generierten Datei.
-- **Real Water 2 / Fluid Painter wirft beim Beenden `missing bl_rna`**: FramePilot startet Blender nun mit `--factory-startup`, damit normale Benutzer-Add-ons nicht geladen werden. Die Add-ons bleiben in der regulären Blender-Oberfläche unverändert. Falls nach `npm run demo` die Datei `scene.blend` existiert und „Demo-Szene erstellt“ ausgegeben wurde, war der Schritt erfolgreich.
-- **`scene.blend` fehlt**: `npm run demo` ausführen oder eine eigene Datei ablegen.
-- **Große Szene rendert langsam**: Blender läuft einmal pro Aufruf; standardmäßig bis 180 Sekunden pro Operation.
+`--apply` allows edits to the **currently open** Blender scene; run it only on a copy or a scene you are comfortable modifying. The workflow makes a baseline render, evaluates candidate previews, and attempts to restore the preferred camera/light configuration. Review the result before manually saving in Blender.
+
+Runs are stored under `runtime/v1_runs/<timestamp>/` (`baseline.png`, `attempt_01.png`, etc., plus `evaluation.json`). `runtime/` is ignored by Git. See [Demo and evaluation](docs/DEMO.md).
+
+## MCP tools
+
+| Tool | Purpose |
+| --- | --- |
+| `inspect_scene` | Read scene summary and active camera |
+| `list_scene_objects` / `get_object` | Read object inventory or details |
+| `list_lights` | Inspect existing light objects |
+| `set_camera` / `set_camera_pose` | Move or restore the active camera |
+| `set_light_properties` | Change a named existing light |
+| `render_preview` | Render a 480 × 270 preview |
+| `create_light` | Manually create a new light with explicit authorization; **not** used by automatic v1 |
+
+The original Codex MCP demo and headless Blender workflow are still present, but **`agent/v1.py` requires the live Blender bridge**. To use the MCP server from Codex CLI, run `npm run setup:codex` and restart Codex; it is not needed to run the Python v1 agent.
+
+## Scope and limitations
+
+- Automatic v1 adjusts the **active camera or one existing light per proposal**. It does not yet edit materials, Geometry Nodes or mesh geometry, and does not automatically create lights.
+- The Director chooses a camera or lighting specialist; this is task routing, not unrestricted tool execution.
+- The vision reviewer compares 480 × 270 rendered images with the stated artistic goal. Its feedback is qualitative, **not a guarantee of improved composition**.
+- Scene inventory does not prove render visibility; poorly lit geometry can be invisible in a preview.
+- Restoration is best-effort for camera and lights touched by the agent. It is not a replacement for a saved backup or Blender Undo.
+- Preview rendering may temporarily block Blender, and running Blender and Ollama together may require substantial memory.
+
+## Development checks
+
+```bash
+npm run check
+source agent/.venv/bin/activate
+python -m unittest discover -s agent/tests -v
+```
+
+These are static/type and local unit checks; real end-to-end testing requires Blender Live and Ollama. The prototype has been exercised with both a generated test scene and a separate user-created scene, but it has not been exhaustively tested across arbitrary `.blend` files.
+
+## Project structure
+
+```text
+src/server.ts               MCP server and legacy tools
+src/v1_tools.ts             Generic v1 MCP tool definitions
+src/live.ts                 Authenticated localhost bridge client
+addons/framepilot_live.py   Blender add-on, scene operations and live server
+agent/v1.py                 LangGraph director / specialists / vision reviewer
+agent/v1_core.py            Validation and candidate-selection helpers
+agent/tests/               Offline tests
+scripts/                   Demo generation and setup helpers
+runtime/                   Local previews and evaluation logs (gitignored)
+```
